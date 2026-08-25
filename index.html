@@ -217,13 +217,12 @@ async function detectCards(file){
   c.width=Math.round(img.width*scale); c.height=Math.round(img.height*scale);
   ctx.drawImage(img,0,0,c.width,c.height);
 
-  const src=cv.imread(c), gray=new cv.Mat(), blur=new cv.Mat(), edge=new cv.Mat();
+  const src=cv.imread(c);
+  const gray=new cv.Mat(), blur=new cv.Mat(), edge=new cv.Mat();
   cv.cvtColor(src,gray,cv.COLOR_RGBA2GRAY);
   cv.GaussianBlur(gray,blur,new cv.Size(5,5),0);
-  cv.Canny(blur,edge,30,110);
+  cv.Canny(blur,25,120,3);
 
-  // Use the original edge map rather than aggressive dilation/closing.
-  // Dilation was causing adjacent cards to merge into one large region.
   const contours=new cv.MatVector(), hierarchy=new cv.Mat();
   cv.findContours(edge,contours,hierarchy,cv.RETR_LIST,cv.CHAIN_APPROX_SIMPLE);
 
@@ -232,52 +231,47 @@ async function detectCards(file){
 
   for(let i=0;i<contours.size();i++){
     const cnt=contours.get(i);
-    const peri=cv.arcLength(cnt,true);
-    const approx=new cv.Mat();
-    cv.approxPolyDP(cnt,approx,Math.max(2,.018*peri),true);
-
     const rect=cv.boundingRect(cnt);
     const area=rect.width*rect.height;
-    const contourArea=Math.abs(cv.contourArea(cnt));
     const ratio=rect.width/rect.height;
     const ar=Math.max(ratio,1/ratio);
-    const fill=area?contourArea/area:0;
 
-    // Trading-card candidates are large, near-rectangular regions.
-    // We keep candidates somewhat loose, then score them below.
-    if(area>imageArea*.008 && area<imageArea*.32 &&
-       ar>1.18 && ar<1.82 &&
-       rect.width>100 && rect.height>100 && fill>.25){
+    // Deliberately broad candidate gate. We use size + aspect ratio rather
+    // than contour fill because glossy card borders can be broken.
+    if(area > imageArea*.010 &&
+       area < imageArea*.30 &&
+       ar > 1.22 && ar < 1.72 &&
+       rect.width > 105 && rect.height > 150){
 
-      let quad=false, quadArea=0;
+      const peri=cv.arcLength(cnt,true);
+      const approx=new cv.Mat();
+      cv.approxPolyDP(cnt,approx,Math.max(2,.025*peri),true);
+
+      let quad=false;
       if(approx.rows===4 && cv.isContourConvex(approx)){
-        quad=true;
-        quadArea=Math.abs(cv.contourArea(approx));
+        const qa=Math.abs(cv.contourArea(approx));
+        if(qa > area*.45) quad=true;
       }
 
-      // A useful score favors large rectangles, four-corner outlines,
-      // and contours whose area is close to their bounding rectangle.
-      const sizeScore=Math.min(1,area/(imageArea*.09));
-      const aspectScore=Math.max(0,1-Math.abs(ar-1.40)/.42);
-      const fillScore=Math.min(1,Math.max(0,(fill-.25)/.55));
-      const quadScore=quad?1:0;
-      const score=.40*sizeScore+.22*aspectScore+.20*fillScore+.18*quadScore;
+      // Prefer larger candidates and true quads, but do not require either.
+      const sizeScore=Math.min(1,area/(imageArea*.055));
+      const aspectScore=Math.max(0,1-Math.abs(ar-1.40)/.30);
+      const score=.62*sizeScore+.18*aspectScore+(quad?.20:0);
 
       candidates.push({
         x:rect.x,y:rect.y,width:rect.width,height:rect.height,
-        area,fill,score,quad,quadArea
+        area,score,quad
       });
+      approx.delete();
     }
-    approx.delete();
     cnt.delete();
   }
 
-  // Sort strongest physical card candidates first.
+  // Sort strongest first and suppress only candidates that are truly
+  // duplicates of the same physical card.
   candidates.sort((a,b)=>b.score-a.score || b.area-a.area);
-
-  // Non-maximum suppression. Adjacent cards should survive because their
-  // centers are separated, while inner borders/duplicate contours disappear.
   const selected=[];
+
   for(const b of candidates){
     let duplicate=false;
     for(const o of selected){
@@ -285,35 +279,38 @@ async function detectCards(file){
       const iy=Math.max(0,Math.min(b.y+b.height,o.y+o.height)-Math.max(b.y,o.y));
       const inter=ix*iy;
       const smaller=Math.min(b.area,o.area);
-      const centerDist=Math.hypot(
-        (b.x+b.width/2)-(o.x+o.width/2),
-        (b.y+b.height/2)-(o.y+o.height/2)
-      );
-      if(inter>smaller*.42 || centerDist<Math.sqrt(smaller)*.42){
-        duplicate=true;break;
+      const overlap=smaller ? inter/smaller : 0;
+
+      const bc={x:b.x+b.width/2,y:b.y+b.height/2};
+      const oc={x:o.x+o.width/2,y:o.y+o.height/2};
+      const centerDist=Math.hypot(bc.x-oc.x,bc.y-oc.y);
+
+      if(overlap>.55 || centerDist<Math.sqrt(smaller)*.30){
+        duplicate=true;
+        break;
       }
     }
     if(!duplicate) selected.push(b);
   }
 
-  // Limit to a sensible batch size and sort in reading order.
-  const finalBoxes=selected.slice(0,20).sort((a,b)=>{
+  // Reading order.
+  selected.sort((a,b)=>{
     const ay=a.y+a.height/2, by=b.y+b.height/2;
-    const row=Math.max(45,Math.min(a.height,b.height)*.55);
-    if(Math.abs(ay-by)>row) return ay-by;
+    const rowTolerance=Math.min(a.height,b.height)*.50;
+    if(Math.abs(ay-by)>rowTolerance) return ay-by;
     return (a.x+a.width/2)-(b.x+b.width/2);
   });
 
+  const finalBoxes=selected.slice(0,20);
+
   if(!finalBoxes.length){
     [src,gray,blur,edge,contours,hierarchy].forEach(x=>x.delete());
-    throw new Error('No card outlines found. Try more space between cards and even lighting.');
+    throw new Error('No card-shaped regions found. Try moving the cards farther apart.');
   }
 
-  // One source canvas is used for all crops. We deliberately use the
-  // bounding rectangle here because it proved reliable on the user's phone.
   const sourceCanvas=sourceCanvasForCrop(src);
   const output=finalBoxes.map((b,i)=>{
-    const pad=Math.max(3,Math.round(Math.min(b.width,b.height)*.012));
+    const pad=Math.max(3,Math.round(Math.min(b.width,b.height)*.015));
     const x=Math.max(0,Math.floor(b.x-pad));
     const y=Math.max(0,Math.floor(b.y-pad));
     const right=Math.min(c.width,Math.ceil(b.x+b.width+pad));
@@ -324,6 +321,7 @@ async function detectCards(file){
     canvas.width=w; canvas.height=h;
     canvas.getContext('2d').drawImage(sourceCanvas,x,y,w,h,0,0,w,h);
     const data=canvas.toDataURL('image/jpeg',.94);
+
     return {
       index:i+1,
       url:data,
