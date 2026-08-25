@@ -264,7 +264,7 @@ async function detectCards(file){
     cnt.delete();
   }
 
-  [src,gray,blur,edge,contours,hierarchy].forEach(x=>x.delete());
+  // Keep src alive until all selected crops have been created.
 
   // Prefer the outer/largest quadrilateral when duplicate borders are found.
   candidates.sort((a,b)=>b.area-a.area);
@@ -277,8 +277,8 @@ async function detectCards(file){
 
   if(!selected.length) throw new Error('No complete card outlines found. Try more space between cards and even lighting.');
 
-  return selected.map((card,i)=>{
-    const canvas = warpCard(c, card.pts);
+  const output = selected.map((card,i)=>{
+    const canvas = warpCard(src, card.pts);
     const data = canvas.toDataURL('image/jpeg', .94);
     return {
       index:i+1,
@@ -287,6 +287,8 @@ async function detectCards(file){
       corners:card.pts
     };
   });
+  [src,gray,blur,edge,contours,hierarchy].forEach(x=>x.delete());
+  return output;
 }
 
 function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}
@@ -318,28 +320,30 @@ function nonOverlappingCandidates(list){
 }
 
 function warpCard(source, pts){
-  const tl=pts[0], tr=pts[1], br=pts[2], bl=pts[3];
-  const width=Math.max(dist(tl,tr),dist(bl,br));
-  const height=Math.max(dist(tl,bl),dist(tr,br));
+  const xs=pts.map(p=>p.x), ys=pts.map(p=>p.y);
+  const minX=Math.max(0,Math.floor(Math.min(...xs)));
+  const minY=Math.max(0,Math.floor(Math.min(...ys)));
+  const maxX=Math.min(source.cols-1,Math.ceil(Math.max(...xs)));
+  const maxY=Math.min(source.rows-1,Math.ceil(Math.max(...ys)));
+  const w=Math.max(1,maxX-minX), h=Math.max(1,maxY-minY);
 
-  // Preserve normal card orientation while allowing modest perspective.
-  const outW=420, outH=Math.max(588,Math.round(outW*(height/width)));
-  const srcPts=cv.matFromArray(4,1,cv.CV_32FC2,[
-    tl.x,tl.y,tr.x,tr.y,br.x,br.y,bl.x,bl.y
-  ]);
-  const dstPts=cv.matFromArray(4,1,cv.CV_32FC2,[
-    0,0,outW-1,0,outW-1,outH-1,0,outH-1
-  ]);
-  const M=cv.getPerspectiveTransform(srcPts,dstPts);
-  const warped=new cv.Mat();
-  cv.warpPerspective(source,warped,M,new cv.Size(outW,outH),cv.INTER_LINEAR,cv.BORDER_REPLICATE);
   const canvas=document.createElement('canvas');
-  canvas.width=outW;canvas.height=outH;
-  const outCtx=canvas.getContext('2d');
-  const rgba=new Uint8ClampedArray(warped.data);
-  const imageData=new ImageData(rgba,outW,outH);
-  outCtx.putImageData(imageData,0,0);
-  srcPts.delete();dstPts.delete();M.delete();warped.delete();
+  canvas.width=w; canvas.height=h;
+  const ctx=canvas.getContext('2d');
+  ctx.drawImage(
+    sourceCanvasForCrop(source),
+    minX,minY,w,h,
+    0,0,w,h
+  );
+  return canvas;
+}
+
+function sourceCanvasForCrop(mat){
+  const canvas=document.createElement('canvas');
+  canvas.width=mat.cols; canvas.height=mat.rows;
+  const ctx=canvas.getContext('2d');
+  const rgba=new Uint8ClampedArray(mat.data);
+  ctx.putImageData(new ImageData(rgba,mat.cols,mat.rows),0,0);
   return canvas;
 }
 function mergeBoxes(bs){
