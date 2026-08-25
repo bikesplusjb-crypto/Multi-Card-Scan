@@ -148,33 +148,61 @@ function getScanCard(d){
    none -- but getPriceBasis() below tells the UI which kind of number
    it actually got, so the shop owner is never shown an asking price
    silently mislabeled as a sold price. */
-function getMarketPrice(d){
+/* ONE RESOLVER, NOT TWO FUNCTIONS THAT HAVE TO AGREE.
+
+   The first version of this fix had getMarketPrice() and getPriceBasis()
+   as two SEPARATE functions, each re-deciding the fallback order on its
+   own. Caught immediately by testing rather than assuming: on
+   contaminated sold data with a valid ask price available,
+   getMarketPrice() correctly fell back to the ask price, but
+   getPriceBasis() independently saw a non-zero sold.soldMedian first
+   and labeled it 'sold_mixed' -- producing "$400 [Mixed comps]" in the
+   UI when $400 was actually the ASK price, not any sold figure at all.
+   Two numbers that must always describe the same fact will eventually
+   drift if computed separately; this was proof of that within minutes
+   of writing it.
+
+   So there is now exactly one place this decision gets made.
+   getMarketPrice() and getPriceBasis() are both thin wrappers that read
+   from the same resolved {price, basis} pair, so they cannot disagree
+   about which one produced the number on screen. */
+function is_contaminated(d, card){
+  return !!(d?.sold?.soldContaminated ?? card?.sold?.soldContaminated);
+}
+function resolvePriceAndBasis(d){
   const card=getScanCard(d);
-  const candidates=[
-    d?.sold?.soldMedian, card?.sold?.soldMedian,
-    d?.avgSoldPrice, d?.avgPrice,
-    d?.sold?.avgSoldPrice, d?.sold?.avgPrice,
-    card?.avgSoldPrice, card?.avgPrice,
-    card?.sold?.avgSoldPrice, card?.sold?.avgPrice
-  ];
-  for(const v of candidates){
-    const n=Number(v);
-    if(Number.isFinite(n) && n>0) return n;
+  const contaminated=is_contaminated(d, card);
+  const soldVal=Number(d?.sold?.soldMedian ?? card?.sold?.soldMedian);
+  const askVal=Number(d?.avgSoldPrice ?? d?.avgPrice ?? card?.avgSoldPrice ?? card?.avgPrice);
+  const soldAskVal=Number(d?.sold?.avgSoldPrice ?? d?.sold?.avgPrice ?? card?.sold?.avgSoldPrice ?? card?.sold?.avgPrice);
+
+  // Clean sold data wins outright -- the best fact available.
+  if(Number.isFinite(soldVal) && soldVal>0 && !contaminated){
+    return {price:soldVal, basis:'sold'};
   }
-  return 0;
+  // No clean sold data (missing, or contaminated). An asking price is
+  // a different KIND of fact, but still a real one and worth showing.
+  if(Number.isFinite(askVal) && askVal>0){
+    return {price:askVal, basis:'ask'};
+  }
+  if(Number.isFinite(soldAskVal) && soldAskVal>0){
+    return {price:soldAskVal, basis:'ask'};
+  }
+  // Nothing clean anywhere. A contaminated median beats no number at
+  // all, but the UI must never call this 'sold' the way clean data is.
+  if(Number.isFinite(soldVal) && soldVal>0 && contaminated){
+    return {price:soldVal, basis:'sold_mixed'};
+  }
+  return {price:0, basis:'none'};
 }
-/* 'sold' = a real sold-comps median was found. 'ask' = only an asking
-   price was available and getMarketPrice() fell back to it. 'none' = no
-   usable price at all. Use this to label the number in the UI honestly
-   instead of showing one bare figure that could be either kind. */
-function getPriceBasis(d){
-  const card=getScanCard(d);
-  const sold=Number(d?.sold?.soldMedian ?? card?.sold?.soldMedian);
-  if(Number.isFinite(sold) && sold>0) return 'sold';
-  const ask=Number(d?.avgSoldPrice ?? d?.avgPrice ?? card?.avgSoldPrice ?? card?.avgPrice);
-  if(Number.isFinite(ask) && ask>0) return 'ask';
-  return 'none';
-}
+function getMarketPrice(d){ return resolvePriceAndBasis(d).price; }
+/* 'sold' = a clean, non-contaminated sold-comps median. 'sold_mixed' =
+   no clean sold data or ask price existed anywhere, so the contaminated
+   median is shown as a last resort -- flagged, not hidden. 'ask' = an
+   asking price was used, whether because there was no sold data at all
+   OR because the only sold data available was contaminated. 'none' = no
+   usable price at all. */
+function getPriceBasis(d){ return resolvePriceAndBasis(d).basis; }
 /* THE BACKEND DOES NOT RETURN A TEAM FIELD AT ALL.
 
    /api/scan-card returns player, year, set, brand, cardNumber, sport,
@@ -655,6 +683,7 @@ function renderResults(){
     // asking-price fallback -- rather than showing one bare figure that
     // could silently be either. See getMarketPrice()/getPriceBasis().
     const basisLabel=basis==='sold'?'<span class="pill ok" style="margin-left:6px">Sold</span>'
+      :basis==='sold_mixed'?'<span class="pill warn" style="margin-left:6px">Mixed comps</span>'
       :basis==='ask'?'<span class="pill warn" style="margin-left:6px">Ask only</span>':'';
     // A box that came back much smaller than the others in the same
     // batch is very likely a fragment of a card's artwork, not the
@@ -668,7 +697,7 @@ function renderResults(){
 function renderInventory(){
   const inv=load(LS_INV,[]);document.getElementById('invCount').textContent=inv.length+' test cards';
   if(!inv.length){document.getElementById('inventoryTable').innerHTML='<div class="empty">No test inventory yet. Run a Multi-Scan batch and add the results.</div>';return}
-  document.getElementById('inventoryTable').innerHTML=`<table><thead><tr><th>Card</th><th>Market</th><th>Cost</th><th>Ask</th><th>Profit</th><th>Status</th></tr></thead><tbody>${inv.map((x,i)=>`<tr><td><b>${esc(x.name)}</b><br><span class="sub">${esc([x.year,x.set,x.number,x.team].filter(Boolean).join(' · '))}</span></td><td>${money(x.market)}${x.priceBasis==='ask'?' <span class="pill warn">ask only</span>':x.priceBasis==='sold'?' <span class="pill ok">sold</span>':''}</td><td><input value="${x.cost}" onchange="editInv(${i},'cost',this.value)" type="number" step=".01"></td><td><input value="${x.ask}" onchange="editInv(${i},'ask',this.value)" type="number" step=".01"></td><td class="${(x.ask-x.cost)>=0?'ok':'bad'}">${money(x.ask-x.cost)}</td><td><select onchange="editInv(${i},'status',this.value)"><option ${x.status==='Available'?'selected':''}>Available</option><option ${x.status==='Listed'?'selected':''}>Listed</option><option ${x.status==='Sold'?'selected':''}>Sold</option></select></td></tr>`).join('')}</tbody></table>`
+  document.getElementById('inventoryTable').innerHTML=`<table><thead><tr><th>Card</th><th>Market</th><th>Cost</th><th>Ask</th><th>Profit</th><th>Status</th></tr></thead><tbody>${inv.map((x,i)=>`<tr><td><b>${esc(x.name)}</b><br><span class="sub">${esc([x.year,x.set,x.number,x.team].filter(Boolean).join(' · '))}</span></td><td>${money(x.market)}${x.priceBasis==='ask'?' <span class="pill warn">ask only</span>':x.priceBasis==='sold_mixed'?' <span class="pill warn">mixed comps</span>':x.priceBasis==='sold'?' <span class="pill ok">sold</span>':''}</td><td><input value="${x.cost}" onchange="editInv(${i},'cost',this.value)" type="number" step=".01"></td><td><input value="${x.ask}" onchange="editInv(${i},'ask',this.value)" type="number" step=".01"></td><td class="${(x.ask-x.cost)>=0?'ok':'bad'}">${money(x.ask-x.cost)}</td><td><select onchange="editInv(${i},'status',this.value)"><option ${x.status==='Available'?'selected':''}>Available</option><option ${x.status==='Listed'?'selected':''}>Listed</option><option ${x.status==='Sold'?'selected':''}>Sold</option></select></td></tr>`).join('')}</tbody></table>`
 }
 function editInv(i,k,v){let a=load(LS_INV,[]);a[i][k]=k==='cost'||k==='ask'?Number(v):v;save(LS_INV,a);renderDashboard()}
 function clearInventory(){if(confirm('Clear only the TEST inventory?')){localStorage.removeItem(LS_INV);renderAll()}}
