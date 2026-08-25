@@ -129,6 +129,37 @@ let sourceFile=null, backSourceFile=null, detectedCards=[], backCards=[], result
 function load(k,f){try{return JSON.parse(localStorage.getItem(k))??f}catch(e){return f}}
 function save(k,v){localStorage.setItem(k,JSON.stringify(v))}
 function money(n){return '$'+Number(n||0).toFixed(2)}
+function getScanCard(d){
+  return d?.card || d || {};
+}
+function getMarketPrice(d){
+  const card=getScanCard(d);
+  const candidates=[
+    d?.avgSoldPrice, d?.avgPrice,
+    d?.sold?.soldMedian, d?.sold?.avgSoldPrice, d?.sold?.avgPrice,
+    card?.avgSoldPrice, card?.avgPrice,
+    card?.sold?.soldMedian, card?.sold?.avgSoldPrice, card?.sold?.avgPrice
+  ];
+  for(const v of candidates){
+    const n=Number(v);
+    if(Number.isFinite(n) && n>0) return n;
+  }
+  return 0;
+}
+function getTeam(d){
+  const card=getScanCard(d);
+  const candidates=[
+    d?.team,d?.cardTeam,d?.playerTeam,d?.teamName,
+    card?.team,card?.cardTeam,card?.playerTeam,card?.teamName,
+    d?.metadata?.team,d?.details?.team,card?.metadata?.team,card?.details?.team
+  ];
+  for(const v of candidates){
+    const s=String(v??'').trim();
+    if(s) return s;
+  }
+  return '';
+}
+
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 
 document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#nav button').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));document.getElementById(b.dataset.view).classList.add('active');renderAll()});
@@ -147,12 +178,14 @@ document.getElementById('backPhoto').onchange=async e=>{
   setStatus('Detecting backs…');
   try{
     backCards=await detectCards(backSourceFile);
+    const n=Math.min(backCards.length,results.length);
+    results.forEach(r=>delete r.back);
+    for(let i=0;i<n;i++) results[i].back=backCards[i];
     if(backCards.length!==results.length){
-      setStatus(`Found ${backCards.length} backs but ${results.length} fronts. Keep the cards in the same positions and retake the back photo.`,'err');
-      return;
+      setStatus(`Matched ${n} back card(s). ${Math.abs(backCards.length-results.length)} card(s) did not get a back and will scan front-only.`,'warn');
+    }else{
+      setStatus(`Matched ${n} back cards by position. They will be sent with their fronts.`,'ok');
     }
-    results.forEach((r,i)=>{r.back=backCards[i];});
-    setStatus(`Matched ${backCards.length} back cards by position. They will be sent with their fronts.`,'ok');
     renderResults();
   }catch(e){setStatus('Back detection error: '+e.message,'err')}
 };
@@ -198,9 +231,9 @@ document.getElementById('addAllBtn').onclick=()=>{
       id:'inv-'+Date.now()+'-'+Math.random().toString(36).slice(2),
       name:d.cardName||card.cardName||card.name||'Scanned card',
       year:d.year||card.year||'',brand:d.brand||card.brand||'',set:d.set||card.set||'',
-      number:d.cardNumber||card.cardNumber||'',team:d.team||card.team||'',
-      market:Number(d.soldMedian||d.currentPrice||d.marketValue||d.price||0)||0,
-      cost:0,ask:Number(d.soldMedian||d.currentPrice||d.marketValue||d.price||0)||0,
+      number:d.cardNumber||card.cardNumber||'',team:getTeam(d),
+      market:getMarketPrice(d),
+      cost:0,ask:getMarketPrice(d),
       status:'Available',image:r.url||'',source:'Multi-Scan',created:new Date().toISOString()
     });added++;
   });
@@ -221,7 +254,7 @@ async function detectCards(file){
   const gray=new cv.Mat(), blur=new cv.Mat(), edge=new cv.Mat();
   cv.cvtColor(src,gray,cv.COLOR_RGBA2GRAY);
   cv.GaussianBlur(gray,blur,new cv.Size(5,5),0);
-  cv.Canny(blur,25,120,3);
+  cv.Canny(blur,edge,25,120,3);
 
   const contours=new cv.MatVector(), hierarchy=new cv.Mat();
   cv.findContours(edge,contours,hierarchy,cv.RETR_LIST,cv.CHAIN_APPROX_SIMPLE);
@@ -258,9 +291,18 @@ async function detectCards(file){
       const aspectScore=Math.max(0,1-Math.abs(ar-1.40)/.30);
       const score=.62*sizeScore+.18*aspectScore+(quad?.20:0);
 
+      let points=null;
+      if(quad){
+        points=[];
+        for(let j=0;j<4;j++){
+          const q=approx.intPtr(j,0);
+          points.push({x:q[0],y:q[1]});
+        }
+        points=orderCorners(points);
+      }
       candidates.push({
         x:rect.x,y:rect.y,width:rect.width,height:rect.height,
-        area,score,quad
+        area,score,quad,points
       });
       approx.delete();
     }
@@ -317,9 +359,14 @@ async function detectCards(file){
     const bottom=Math.min(c.height,Math.ceil(b.y+b.height+pad));
     const w=Math.max(1,right-x), h=Math.max(1,bottom-y);
 
-    const canvas=document.createElement('canvas');
-    canvas.width=w; canvas.height=h;
-    canvas.getContext('2d').drawImage(sourceCanvas,x,y,w,h,0,0,w,h);
+    let canvas;
+    if(b.quad && b.points && b.points.length===4){
+      canvas=warpCard(src,b.points);
+    }else{
+      canvas=document.createElement('canvas');
+      canvas.width=w; canvas.height=h;
+      canvas.getContext('2d').drawImage(sourceCanvas,x,y,w,h,0,0,w,h);
+    }
     const data=canvas.toDataURL('image/jpeg',.94);
 
     return {
@@ -362,21 +409,28 @@ function nonOverlappingCandidates(list){
 }
 
 function warpCard(source, pts){
-  const xs=pts.map(p=>p.x), ys=pts.map(p=>p.y);
-  const minX=Math.max(0,Math.floor(Math.min(...xs)));
-  const minY=Math.max(0,Math.floor(Math.min(...ys)));
-  const maxX=Math.min(source.cols-1,Math.ceil(Math.max(...xs)));
-  const maxY=Math.min(source.rows-1,Math.ceil(Math.max(...ys)));
-  const w=Math.max(1,maxX-minX), h=Math.max(1,maxY-minY);
+  const tl=pts[0],tr=pts[1],br=pts[2],bl=pts[3];
+  const width=Math.max(dist(tl,tr),dist(bl,br));
+  const height=Math.max(dist(tl,bl),dist(tr,br));
+  const outW=420;
+  const outH=Math.max(588,Math.round(outW*(height/width)));
 
-  const canvas=document.createElement('canvas');
-  canvas.width=w; canvas.height=h;
-  const ctx=canvas.getContext('2d');
-  ctx.drawImage(
-    sourceCanvasForCrop(source),
-    minX,minY,w,h,
-    0,0,w,h
+  const srcPts=cv.matFromArray(4,1,cv.CV_32FC2,[
+    tl.x,tl.y,tr.x,tr.y,br.x,br.y,bl.x,bl.y
+  ]);
+  const dstPts=cv.matFromArray(4,1,cv.CV_32FC2,[
+    0,0,outW-1,0,outW-1,outH-1,0,outH-1
+  ]);
+  const M=cv.getPerspectiveTransform(srcPts,dstPts);
+  const warped=new cv.Mat();
+
+  cv.warpPerspective(
+    source,warped,M,new cv.Size(outW,outH),
+    cv.INTER_LINEAR,cv.BORDER_REPLICATE
   );
+
+  const canvas=sourceCanvasForCrop(warped);
+  srcPts.delete();dstPts.delete();M.delete();warped.delete();
   return canvas;
 }
 
@@ -406,8 +460,8 @@ function dataURLtoFile(u,name){const [h,b]=u.split(',');const mime=h.match(/:(.*
 function setStatus(t,c=''){const el=document.getElementById('scanStatus');el.textContent=t;el.className='status '+c}
 function renderResults(){
   const el=document.getElementById('results');el.innerHTML=results.map((r,i)=>{
-    const d=r.data||{};const name=d.cardName||'Unidentified';const price=d.soldMedian||d.currentPrice||d.marketValue||d.price||0;
-    return `<div class="item"><img src="${r.url}" alt=""><div class="body"><div class="name">${esc(name)}</div><div class="meta">${esc([d.year,d.set,d.cardNumber].filter(Boolean).join(' · '))}</div><div class="pill ${r.status==='Scanned'?'ok':r.status.startsWith('Failed')?'bad':'warn'}">${esc(r.status)}</div>${price?`<div style="margin-top:7px;font-weight:900;color:var(--green)">${money(price)}</div>`:''}
+    const d=r.data||{};const card=getScanCard(d);const name=d.cardName||card.cardName||card.name||'Unidentified';const price=getMarketPrice(d);
+    return `<div class="item"><img src="${r.url}" alt=""><div class="body"><div class="name">${esc(name)}</div><div class="meta">${esc([d.year||card.year,d.set||card.set,d.cardNumber||card.cardNumber,getTeam(d)].filter(Boolean).join(' · '))}</div><div class="pill ${r.status==='Scanned'?'ok':r.status.startsWith('Failed')?'bad':'warn'}">${esc(r.status)}</div>${price?`<div style="margin-top:7px;font-weight:900;color:var(--green)">${money(price)}</div>`:''}
       ${r.back?`<div class="pill ok">Front + Back matched</div>`:''}</div></div>`
   }).join('');
 }
@@ -438,9 +492,33 @@ function renderAssignments(){
   el.innerHTML=`<div class="actions row"><button class="btn blue" onclick="autoAssign()">Auto-assign scanned cards</button><button class="btn" onclick="renderAssignments()">Refresh</button></div>${activeBreak.spots.map(s=>`<div class="panel" style="margin:10px 0"><b>Spot ${s.spot}</b> — ${esc(s.customer||'Unassigned')} — ${esc(s.team||'No team')}</b><div class="sub">${s.cards.length} assigned card(s)</div>${s.cards.length?'<ul>'+s.cards.map(id=>{const x=inv.find(z=>z.id===id);return `<li>${esc(x?x.name:id)}</li>`}).join('')+'</ul>':'<div class="sub" style="margin-top:5px">Nothing assigned yet.</div>'}</div>`).join('')}`;
 }
 function autoAssign(){
-  if(!activeBreak)return;const inv=load(LS_INV,[]),available=inv.filter(x=>x.status!=='Sold');let assigned=0;
-  results.filter(r=>r.data).forEach(r=>{const d=r.data;const team=String(d.team||d.cardTeam||'').toLowerCase();if(!team)return;const spot=activeBreak.spots.find(s=>s.team&&s.team.toLowerCase()===team);if(!spot)return;const x=available.find(z=>z.name===(d.cardName||'')&&!spot.cards.includes(z.id));if(x){spot.cards.push(x.id);assigned++}});
-  save(LS_BREAK,activeBreak);renderAssignments();alert(assigned?`Assigned ${assigned} card(s).`:'No team matches were available. Manual assignment is still supported.');
+  if(!activeBreak)return;
+  const inv=load(LS_INV,[]), available=inv.filter(x=>x.status!=='Sold');
+  let assigned=0, noTeam=0;
+
+  results.filter(r=>r.data).forEach(r=>{
+    const d=r.data, team=getTeam(d).toLowerCase();
+    if(!team){noTeam++;return;}
+    const spot=activeBreak.spots.find(s=>s.team&&s.team.toLowerCase()===team);
+    if(!spot)return;
+    const card=getScanCard(d);
+    const x=available.find(z=>
+      z.name===(d.cardName||card.cardName||card.name||'') &&
+      !spot.cards.includes(z.id)
+    );
+    if(x){spot.cards.push(x.id);assigned++}
+  });
+
+  save(LS_BREAK,activeBreak);
+  renderAssignments();
+
+  if(assigned){
+    alert(`Assigned ${assigned} card(s).${noTeam?` ${noTeam} scanned card(s) had no team data.`:''}`);
+  }else if(noTeam){
+    alert('The scan results do not contain team data, so automatic team assignment cannot run yet. Manual assignment is still supported.');
+  }else{
+    alert('No team matches were available. Manual assignment is still supported.');
+  }
 }
 function renderDashboard(){
   const inv=load(LS_INV,[]);document.getElementById('mCards').textContent=inv.length;document.getElementById('mValue').textContent=money(inv.reduce((a,x)=>a+Number(x.market||0),0));document.getElementById('mProfit').textContent=money(inv.reduce((a,x)=>a+Number(x.ask||0)-Number(x.cost||0),0));document.getElementById('mSpots').textContent=activeBreak?activeBreak.spots.length:0;
