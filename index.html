@@ -132,19 +132,95 @@ function money(n){return '$'+Number(n||0).toFixed(2)}
 function getScanCard(d){
   return d?.card || d || {};
 }
+/* SOLD DATA FIRST, ASKING PRICE ONLY AS A FALLBACK.
+
+   avgSoldPrice is a misleading field name on the backend -- despite the
+   name, it is market.avgPrice, the median of ACTIVE eBay LISTINGS
+   (asking prices), not anything sold. The real sold data lives nested
+   at sold.soldMedian. The old version of this function checked the
+   misleadingly-named field first, so a shop owner would have been shown
+   an asking-price average labeled as market value on almost every card,
+   even when real sold comps existed right next to it in the same
+   response.
+
+   Sold data is checked first now. Asking price is still used as a
+   fallback when there is genuinely no sold data -- a rough number beats
+   none -- but getPriceBasis() below tells the UI which kind of number
+   it actually got, so the shop owner is never shown an asking price
+   silently mislabeled as a sold price. */
 function getMarketPrice(d){
   const card=getScanCard(d);
   const candidates=[
+    d?.sold?.soldMedian, card?.sold?.soldMedian,
     d?.avgSoldPrice, d?.avgPrice,
-    d?.sold?.soldMedian, d?.sold?.avgSoldPrice, d?.sold?.avgPrice,
+    d?.sold?.avgSoldPrice, d?.sold?.avgPrice,
     card?.avgSoldPrice, card?.avgPrice,
-    card?.sold?.soldMedian, card?.sold?.avgSoldPrice, card?.sold?.avgPrice
+    card?.sold?.avgSoldPrice, card?.sold?.avgPrice
   ];
   for(const v of candidates){
     const n=Number(v);
     if(Number.isFinite(n) && n>0) return n;
   }
   return 0;
+}
+/* 'sold' = a real sold-comps median was found. 'ask' = only an asking
+   price was available and getMarketPrice() fell back to it. 'none' = no
+   usable price at all. Use this to label the number in the UI honestly
+   instead of showing one bare figure that could be either kind. */
+function getPriceBasis(d){
+  const card=getScanCard(d);
+  const sold=Number(d?.sold?.soldMedian ?? card?.sold?.soldMedian);
+  if(Number.isFinite(sold) && sold>0) return 'sold';
+  const ask=Number(d?.avgSoldPrice ?? d?.avgPrice ?? card?.avgSoldPrice ?? card?.avgPrice);
+  if(Number.isFinite(ask) && ask>0) return 'ask';
+  return 'none';
+}
+/* THE BACKEND DOES NOT RETURN A TEAM FIELD AT ALL.
+
+   /api/scan-card returns player, year, set, brand, cardNumber, sport,
+   parallel -- never a team. Every one of the candidate fields below
+   checks a name the API genuinely might use, but as of this build none
+   of them exist, so this always fell through to ''.
+
+   Rather than have the AI guess a team from the card image (an extra,
+   fallible vision call for something that's public, static knowledge
+   for well-known players), this falls back to a small hand-maintained
+   player -> team table. It only covers well-known current players, and
+   it WILL go stale -- rosters change with trades and free agency, and
+   this table is not re-verified against any live source. Treat it as a
+   convenience for common cases in Break Manager, not an authority. A
+   player not in the table returns '' (honestly unknown) rather than a
+   guess, same principle as everywhere else in this app: no team is
+   better than the wrong team, since a wrong auto-assign silently
+   drops a card into the wrong customer's spot. */
+const PLAYER_TEAM_MAP={
+  // MLB
+  'shohei ohtani':'Dodgers','aaron judge':'Yankees','mike trout':'Angels',
+  'ronald acuna jr':'Braves','ronald acuna jr.':'Braves','juan soto':'Mets',
+  'bobby witt jr':'Royals','bobby witt jr.':'Royals','elly de la cruz':'Reds',
+  'julio rodriguez':'Mariners','corbin carroll':'Diamondbacks',
+  'gunnar henderson':'Orioles','yordan alvarez':'Astros',
+  'freddie freeman':'Dodgers','mookie betts':'Dodgers',
+  'fernando tatis jr':'Padres','fernando tatis jr.':'Padres',
+  'vladimir guerrero jr':'Blue Jays','vladimir guerrero jr.':'Blue Jays',
+  'bryce harper':'Phillies','paul skenes':'Pirates',
+  // NBA
+  'lebron james':'Lakers','stephen curry':'Warriors','steph curry':'Warriors',
+  'nikola jokic':'Nuggets','giannis antetokounmpo':'Bucks',
+  'joel embiid':'76ers','victor wembanyama':'Spurs',
+  'anthony edwards':'Timberwolves','jayson tatum':'Celtics',
+  'shai gilgeous-alexander':'Thunder','zion williamson':'Pelicans',
+  'ja morant':'Grizzlies',
+  // NFL
+  'patrick mahomes':'Chiefs','josh allen':'Bills',
+  'jayden daniels':'Commanders','caleb williams':'Bears',
+  'c.j. stroud':'Texans','cj stroud':'Texans',
+  'justin jefferson':'Vikings',"ja'marr chase":'Bengals','jamarr chase':'Bengals',
+  'christian mccaffrey':'49ers','travis kelce':'Chiefs'
+};
+function lookupPlayerTeam(name){
+  const key=String(name||'').trim().toLowerCase();
+  return key && PLAYER_TEAM_MAP[key] || '';
 }
 function getTeam(d){
   const card=getScanCard(d);
@@ -157,7 +233,8 @@ function getTeam(d){
     const s=String(v??'').trim();
     if(s) return s;
   }
-  return '';
+  const player=d?.player||card?.player||'';
+  return lookupPlayerTeam(player);
 }
 
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
@@ -173,18 +250,61 @@ document.getElementById('photo').onchange=async e=>{
 
 document.getElementById('backBtn').onclick=()=>document.getElementById('backPhoto').click();
 
+/* GREEDY NEAREST-NEIGHBOR MATCHING BY ACTUAL POSITION.
+
+   The old version paired front[i] with back[i] purely by array index --
+   it assumed OpenCV's reading-order sort would land in the identical
+   order on two SEPARATE detection runs against two separate photos.
+   That is not guaranteed: a slightly different card gap, one missed
+   detection, or a card nudged while flipping it over is enough to
+   silently attach the wrong back to the wrong front, with nothing in
+   the UI to reveal it happened.
+
+   This instead uses each card's normalized (nx,ny) center -- captured
+   in detectCards() -- and greedily pairs the closest front/back centers
+   first, one-to-one. It still relies on the user keeping cards roughly
+   in place while flipping them (the UI already asks for that), but it
+   verifies proximity instead of assuming index order, and it degrades
+   honestly: a front or back that has no good match just doesn't get
+   paired, rather than being forced onto whatever index happened to be
+   next. */
+function matchBacksToFronts(fronts, backs){
+  const pairs=[];
+  fronts.forEach((f,fi)=>{
+    backs.forEach((b,bi)=>{
+      const d=Math.hypot((f.nx??0)-(b.nx??0),(f.ny??0)-(b.ny??0));
+      pairs.push({fi,bi,d});
+    });
+  });
+  pairs.sort((a,b)=>a.d-b.d);
+  const usedFront=new Set(), usedBack=new Set();
+  const matches=new Array(fronts.length).fill(null);
+  for(const p of pairs){
+    if(usedFront.has(p.fi)||usedBack.has(p.bi)) continue;
+    matches[p.fi]=p.bi;
+    usedFront.add(p.fi); usedBack.add(p.bi);
+  }
+  return matches;
+}
+
 document.getElementById('backPhoto').onchange=async e=>{
   backSourceFile=e.target.files[0]; if(!backSourceFile)return;
   setStatus('Detecting backs…');
   try{
     backCards=await detectCards(backSourceFile);
-    const n=Math.min(backCards.length,results.length);
     results.forEach(r=>delete r.back);
-    for(let i=0;i<n;i++) results[i].back=backCards[i];
-    if(backCards.length!==results.length){
-      setStatus(`Matched ${n} back card(s). ${Math.abs(backCards.length-results.length)} card(s) did not get a back and will scan front-only.`,'warn');
+    const matches=matchBacksToFronts(results,backCards);
+    let matched=0;
+    matches.forEach((bi,fi)=>{
+      if(bi!=null){ results[fi].back=backCards[bi]; matched++; }
+    });
+    const unmatchedBacks=backCards.length-matched;
+    if(matched===results.length && matched===backCards.length){
+      setStatus(`Matched ${matched} back card(s) by position. They will be sent with their fronts.`,'ok');
     }else{
-      setStatus(`Matched ${n} back cards by position. They will be sent with their fronts.`,'ok');
+      setStatus(`Matched ${matched} of ${results.length} front(s) to a back by position.`
+        +(results.length-matched?` ${results.length-matched} front(s) will scan front-only.`:'')
+        +(unmatchedBacks>0?` ${unmatchedBacks} detected back(s) did not match any front.`:''),'warn');
     }
     renderResults();
   }catch(e){setStatus('Back detection error: '+e.message,'err')}
@@ -232,7 +352,7 @@ document.getElementById('addAllBtn').onclick=()=>{
       name:d.cardName||card.cardName||card.name||'Scanned card',
       year:d.year||card.year||'',brand:d.brand||card.brand||'',set:d.set||card.set||'',
       number:d.cardNumber||card.cardNumber||'',team:getTeam(d),
-      market:getMarketPrice(d),
+      market:getMarketPrice(d),priceBasis:getPriceBasis(d),
       cost:0,ask:getMarketPrice(d),
       status:'Available',image:r.url||'',source:'Multi-Scan',created:new Date().toISOString()
     });added++;
@@ -369,10 +489,15 @@ async function detectCards(file){
     }
     const data=canvas.toDataURL('image/jpeg',.94);
 
+    // Normalized (0..1) center position within THIS photo. Used later to
+    // match this card's back to the same physical card in a separately
+    // detected back photo -- see matchBacksToFronts().
     return {
       index:i+1,
       url:data,
-      file:dataURLtoFile(data,'card-'+(i+1)+'.jpg')
+      file:dataURLtoFile(data,'card-'+(i+1)+'.jpg'),
+      nx:(b.x+b.width/2)/c.width,
+      ny:(b.y+b.height/2)/c.height
     };
   });
 
@@ -460,15 +585,20 @@ function dataURLtoFile(u,name){const [h,b]=u.split(',');const mime=h.match(/:(.*
 function setStatus(t,c=''){const el=document.getElementById('scanStatus');el.textContent=t;el.className='status '+c}
 function renderResults(){
   const el=document.getElementById('results');el.innerHTML=results.map((r,i)=>{
-    const d=r.data||{};const card=getScanCard(d);const name=d.cardName||card.cardName||card.name||'Unidentified';const price=getMarketPrice(d);
-    return `<div class="item"><img src="${r.url}" alt=""><div class="body"><div class="name">${esc(name)}</div><div class="meta">${esc([d.year||card.year,d.set||card.set,d.cardNumber||card.cardNumber,getTeam(d)].filter(Boolean).join(' · '))}</div><div class="pill ${r.status==='Scanned'?'ok':r.status.startsWith('Failed')?'bad':'warn'}">${esc(r.status)}</div>${price?`<div style="margin-top:7px;font-weight:900;color:var(--green)">${money(price)}</div>`:''}
+    const d=r.data||{};const card=getScanCard(d);const name=d.cardName||card.cardName||card.name||'Unidentified';const price=getMarketPrice(d);const basis=getPriceBasis(d);
+    // Label WHICH kind of number this is -- a real sold median, or an
+    // asking-price fallback -- rather than showing one bare figure that
+    // could silently be either. See getMarketPrice()/getPriceBasis().
+    const basisLabel=basis==='sold'?'<span class="pill ok" style="margin-left:6px">Sold</span>'
+      :basis==='ask'?'<span class="pill warn" style="margin-left:6px">Ask only</span>':'';
+    return `<div class="item"><img src="${r.url}" alt=""><div class="body"><div class="name">${esc(name)}</div><div class="meta">${esc([d.year||card.year,d.set||card.set,d.cardNumber||card.cardNumber,getTeam(d)].filter(Boolean).join(' · '))}</div><div class="pill ${r.status==='Scanned'?'ok':r.status.startsWith('Failed')?'bad':'warn'}">${esc(r.status)}</div>${price?`<div style="margin-top:7px;font-weight:900;color:var(--green)">${money(price)}${basisLabel}</div>`:''}
       ${r.back?`<div class="pill ok">Front + Back matched</div>`:''}</div></div>`
   }).join('');
 }
 function renderInventory(){
   const inv=load(LS_INV,[]);document.getElementById('invCount').textContent=inv.length+' test cards';
   if(!inv.length){document.getElementById('inventoryTable').innerHTML='<div class="empty">No test inventory yet. Run a Multi-Scan batch and add the results.</div>';return}
-  document.getElementById('inventoryTable').innerHTML=`<table><thead><tr><th>Card</th><th>Market</th><th>Cost</th><th>Ask</th><th>Profit</th><th>Status</th></tr></thead><tbody>${inv.map((x,i)=>`<tr><td><b>${esc(x.name)}</b><br><span class="sub">${esc([x.year,x.set,x.number,x.team].filter(Boolean).join(' · '))}</span></td><td>${money(x.market)}</td><td><input value="${x.cost}" onchange="editInv(${i},'cost',this.value)" type="number" step=".01"></td><td><input value="${x.ask}" onchange="editInv(${i},'ask',this.value)" type="number" step=".01"></td><td class="${(x.ask-x.cost)>=0?'ok':'bad'}">${money(x.ask-x.cost)}</td><td><select onchange="editInv(${i},'status',this.value)"><option ${x.status==='Available'?'selected':''}>Available</option><option ${x.status==='Listed'?'selected':''}>Listed</option><option ${x.status==='Sold'?'selected':''}>Sold</option></select></td></tr>`).join('')}</tbody></table>`
+  document.getElementById('inventoryTable').innerHTML=`<table><thead><tr><th>Card</th><th>Market</th><th>Cost</th><th>Ask</th><th>Profit</th><th>Status</th></tr></thead><tbody>${inv.map((x,i)=>`<tr><td><b>${esc(x.name)}</b><br><span class="sub">${esc([x.year,x.set,x.number,x.team].filter(Boolean).join(' · '))}</span></td><td>${money(x.market)}${x.priceBasis==='ask'?' <span class="pill warn">ask only</span>':x.priceBasis==='sold'?' <span class="pill ok">sold</span>':''}</td><td><input value="${x.cost}" onchange="editInv(${i},'cost',this.value)" type="number" step=".01"></td><td><input value="${x.ask}" onchange="editInv(${i},'ask',this.value)" type="number" step=".01"></td><td class="${(x.ask-x.cost)>=0?'ok':'bad'}">${money(x.ask-x.cost)}</td><td><select onchange="editInv(${i},'status',this.value)"><option ${x.status==='Available'?'selected':''}>Available</option><option ${x.status==='Listed'?'selected':''}>Listed</option><option ${x.status==='Sold'?'selected':''}>Sold</option></select></td></tr>`).join('')}</tbody></table>`
 }
 function editInv(i,k,v){let a=load(LS_INV,[]);a[i][k]=k==='cost'||k==='ask'?Number(v):v;save(LS_INV,a);renderDashboard()}
 function clearInventory(){if(confirm('Clear only the TEST inventory?')){localStorage.removeItem(LS_INV);renderAll()}}
