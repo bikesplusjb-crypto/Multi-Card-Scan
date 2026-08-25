@@ -335,7 +335,10 @@ function warpCard(source, pts){
   cv.warpPerspective(source,warped,M,new cv.Size(outW,outH),cv.INTER_LINEAR,cv.BORDER_REPLICATE);
   const canvas=document.createElement('canvas');
   canvas.width=outW;canvas.height=outH;
-  cv.imshow(canvas,warped);
+  const outCtx=canvas.getContext('2d');
+  const rgba=new Uint8ClampedArray(warped.data);
+  const imageData=new ImageData(rgba,outW,outH);
+  outCtx.putImageData(imageData,0,0);
   srcPts.delete();dstPts.delete();M.delete();warped.delete();
   return canvas;
 }
