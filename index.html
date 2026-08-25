@@ -398,9 +398,28 @@ async function detectCards(file){
      overhead -- which this tool already asks for -- that fallback crop
      is nearly indistinguishable from a corrected one. Actually finding
      the card is the bigger win. */
-  cv.GaussianBlur(gray,blur,new cv.Size(11,11),0);
+  /* PARAMETERS RE-TUNED AFTER A REAL RESOLUTION MISMATCH.
+
+     The first pass at this fix ((11,11) blur, 3x3 dilate x2) was
+     verified against a screenshot-derived test image at ~1000-1300px --
+     but the app's real working canvas runs at up to 2200px (see the
+     resize two lines above). At that higher resolution the same fixed
+     blur kernel no longer smoothed the foil/refractor texture enough,
+     and testing also caught a SECOND failure mode that a simple
+     detected-count check would have missed: at some parameter
+     combinations, all 5 cards were "found," but one box was a small
+     internal fragment (a graphic element inside a busy-but-matte card),
+     not the actual card. Area size, not just count, had to be checked.
+
+     This configuration was grid-searched and verified against the
+     actual working resolution range (900px-2200px) AND against two
+     independently taken real photos, checking both correct count AND
+     that every selected box falls in a consistent card-sized range
+     (no box under half the median size of the others) -- catching
+     exactly the false-small-box failure mode above. */
+  cv.GaussianBlur(gray,blur,new cv.Size(9,9),0);
   cv.Canny(blur,edge,25,120,3);
-  const edgeCloseKernel=cv.Mat.ones(3,3,cv.CV_8U);
+  const edgeCloseKernel=cv.Mat.ones(5,5,cv.CV_8U);
   cv.dilate(edge,edge,edgeCloseKernel,new cv.Point(-1,-1),2);
   edgeCloseKernel.delete();
 
@@ -498,6 +517,20 @@ async function detectCards(file){
     throw new Error('No card-shaped regions found. Try moving the cards farther apart.');
   }
 
+  /* SIZE-OUTLIER CHECK.
+
+     A real failure mode found in testing: the count of detected boxes
+     can be exactly right (5 found, 5 cards on the table) while one box
+     is actually a small fragment INSIDE a busy card's artwork, not the
+     card itself -- a wrong result that a simple "did we find enough
+     boxes" check cannot catch, only comparing box sizes to each other
+     can. Cards in one batch are the same physical size, so a real
+     outlier here means a bad crop, not a smaller card. Flagged, not
+     dropped -- the crop still gets used, but the UI can warn the person
+     to double check that one before scanning. */
+  const boxAreas=finalBoxes.map(b=>b.width*b.height).sort((a,b)=>a-b);
+  const medianArea=boxAreas[Math.floor(boxAreas.length/2)]||0;
+
   const sourceCanvas=sourceCanvasForCrop(src);
   const output=finalBoxes.map((b,i)=>{
     const pad=Math.max(3,Math.round(Math.min(b.width,b.height)*.015));
@@ -520,12 +553,16 @@ async function detectCards(file){
     // Normalized (0..1) center position within THIS photo. Used later to
     // match this card's back to the same physical card in a separately
     // detected back photo -- see matchBacksToFronts().
+    const area=b.width*b.height;
+    const sizeOutlier=medianArea>0 && area < medianArea*0.4;
+
     return {
       index:i+1,
       url:data,
       file:dataURLtoFile(data,'card-'+(i+1)+'.jpg'),
       nx:(b.x+b.width/2)/c.width,
-      ny:(b.y+b.height/2)/c.height
+      ny:(b.y+b.height/2)/c.height,
+      sizeOutlier
     };
   });
 
@@ -619,7 +656,12 @@ function renderResults(){
     // could silently be either. See getMarketPrice()/getPriceBasis().
     const basisLabel=basis==='sold'?'<span class="pill ok" style="margin-left:6px">Sold</span>'
       :basis==='ask'?'<span class="pill warn" style="margin-left:6px">Ask only</span>':'';
-    return `<div class="item"><img src="${r.url}" alt=""><div class="body"><div class="name">${esc(name)}</div><div class="meta">${esc([d.year||card.year,d.set||card.set,d.cardNumber||card.cardNumber,getTeam(d)].filter(Boolean).join(' · '))}</div><div class="pill ${r.status==='Scanned'?'ok':r.status.startsWith('Failed')?'bad':'warn'}">${esc(r.status)}</div>${price?`<div style="margin-top:7px;font-weight:900;color:var(--green)">${money(price)}${basisLabel}</div>`:''}
+    // A box that came back much smaller than the others in the same
+    // batch is very likely a fragment of a card's artwork, not the
+    // card itself -- see the sizeOutlier check in detectCards(). Flag
+    // it visibly rather than silently scanning a bad crop.
+    const outlierWarning=r.sizeOutlier?'<div class="pill bad" style="margin-top:6px">⚠ Crop looks too small — re-detect this one</div>':'';
+    return `<div class="item"><img src="${r.url}" alt=""><div class="body"><div class="name">${esc(name)}</div><div class="meta">${esc([d.year||card.year,d.set||card.set,d.cardNumber||card.cardNumber,getTeam(d)].filter(Boolean).join(' · '))}</div><div class="pill ${r.status==='Scanned'?'ok':r.status.startsWith('Failed')?'bad':'warn'}">${esc(r.status)}</div>${outlierWarning}${price?`<div style="margin-top:7px;font-weight:900;color:var(--green)">${money(price)}${basisLabel}</div>`:''}
       ${r.back?`<div class="pill ok">Front + Back matched</div>`:''}</div></div>`
   }).join('');
 }
