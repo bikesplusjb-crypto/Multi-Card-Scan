@@ -116,6 +116,7 @@ input,select{background:#0b1322;color:var(--text);border:1px solid var(--line);b
   </section>
 </div>
 
+<script async src="https://docs.opencv.org/4.x/opencv.js"></script>
 <script>
 const API='https://stock-card-api.onrender.com';
 const LS_INV='cg_business_v1_inventory';
@@ -194,8 +195,8 @@ async function detectCards(file){
   let boxes=[];
   for(let i=0;i<contours.size();i++){
     const cnt=contours.get(i), peri=cv.arcLength(cnt,true), approx=new cv.Mat();
-    cv.approxPolyDP(cnt,approx,.025*peri,true);const rect=cv.boundingRect(approx);const area=rect.width*rect.height;const ratio=rect.width/rect.height;
-    if(area>c.width*c.height*.015 && area<c.width*c.height*.45 && ratio>.48&&ratio<.82)boxes.push(rect);
+    cv.approxPolyDP(cnt,approx,.025*peri,true);const rect=cv.boundingRect(approx);const area=rect.width*rect.height;const ratio=rect.width/rect.height;const ar=ratio<1?1/ratio:ratio;
+    if(area>c.width*c.height*.012 && area<c.width*c.height*.50 && ar>1.15&&ar<2.25)boxes.push(rect);
     approx.delete();cnt.delete();
   }
   boxes=mergeBoxes(boxes).sort((a,b)=>a.y-b.y||a.x-b.x).slice(0,20);
@@ -211,7 +212,16 @@ async function detectCards(file){
 function mergeBoxes(bs){
   const out=[];
   for(const b of bs){let merged=false;for(const o of out){const ix=Math.max(0,Math.min(b.x+b.width,o.x+o.width)-Math.max(b.x,o.x));const iy=Math.max(0,Math.min(b.y+b.height,o.y+o.height)-Math.max(b.y,o.y));if(ix*iy>Math.min(b.width*b.height,o.width*o.height)*.35){const x=Math.min(b.x,o.x),y=Math.min(b.y,o.y),r=Math.max(b.x+b.width,o.x+o.width),bot=Math.max(b.y+b.height,o.y+o.height);o.x=x;o.y=y;o.width=r-x;o.height=bot-y;merged=true;break}}if(!merged)out.push({...b})}return out}
-function waitForCV(){return new Promise((res,rej)=>{let n=0;(function f(){if(window.cv&&cv.Mat)return res();if(n++>100)return rej(new Error('OpenCV did not load'));setTimeout(f,100)})()})}
+function waitForCV(){
+  return new Promise((res,rej)=>{
+    let n=0;
+    (function f(){
+      if(window.cv && typeof cv.Mat==='function') return res();
+      if(n++>300) return rej(new Error('OpenCV did not load. Refresh the page and try again.'));
+      setTimeout(f,100);
+    })();
+  });
+}
 function imageFromFile(file){return new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=URL.createObjectURL(file)})}
 function dataURLtoFile(u,name){const [h,b]=u.split(',');const mime=h.match(/:(.*?);/)[1];const bin=atob(b);const a=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i);return new File([a],name,{type:mime})}
 function setStatus(t,c=''){const el=document.getElementById('scanStatus');el.textContent=t;el.className='status '+c}
