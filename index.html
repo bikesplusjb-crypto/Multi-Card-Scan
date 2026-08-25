@@ -50,10 +50,30 @@ input,select{background:#0b1322;color:var(--text);border:1px solid var(--line);b
     <div class="panel">
       <h2>1. Capture the batch</h2>
       <div class="sub">Best results: 3–10 cards, flat, not overlapping, camera roughly overhead, even lighting. After the fronts are detected, you can flip the cards in the same positions and capture the backs.</div>
+      <div class="sub" style="margin-top:6px;color:var(--gold)">⚠ Shiny/refractor/prizm cards are harder to detect reliably than plain cards — direct glare can cause one to be missed or cropped wrong. Angling the card slightly to avoid a bright reflection, or using softer/indirect light, helps. Set the expected card count below so a miss gets flagged instead of slipping through.</div>
       <label class="drop" for="photo"><strong>📷 Take photo / choose image</strong><br><span class="sub">On a phone, this opens the camera or photo picker.</span></label>
       <input id="photo" type="file" accept="image/*" capture="environment">
       <input id="backPhoto" type="file" accept="image/*" capture="environment" style="display:none">
       <img id="source" class="preview" alt="">
+      <!-- EXPECTED-COUNT SAFETY NET.
+
+           Detection on shiny/refractor cards is glare-sensitive in a way
+           no fixed blur/dilate setting fully eliminates -- confirmed
+           directly: the same 5 real cards detected 5/5 clean in one
+           photo, then a genuinely missed card AND a small false
+           fragment in another, purely from a harsher lighting angle.
+           The fragment case is already caught by the size-outlier
+           check elsewhere in this file, but a card that is missed
+           ENTIRELY produces nothing to flag -- there is no wrong box
+           to compare against, just an absent one. The app has no way
+           to know a 5th card should exist unless told.
+
+           This tells it. Optional on purpose -- forcing a count before
+           every batch would be friction for the common case where
+           detection just works, and an unset field is silently
+           skipped, never treated as "expected 0". */ -->
+      <div class="sub" style="margin-top:8px">Optional: how many cards are in this photo? Lets detection warn you if it finds fewer.</div>
+      <input id="expectedCount" type="number" min="1" max="30" placeholder="e.g. 5" style="width:100px;margin-top:4px">
       <div class="stats">
         <div class="stat"><b id="detected">0</b><span>Cards detected</span></div>
         <div class="stat"><b id="scanned">0</b><span>Cards scanned</span></div>
@@ -349,7 +369,29 @@ document.getElementById('detectBtn').onclick=async()=>{
     renderResults();
     document.getElementById('scanBtn').disabled=!results.length;
     document.getElementById('backBtn').disabled=!results.length;
-    setStatus(results.length?`Detected ${results.length} card region${results.length===1?'':'s'}.`:'No reliable card regions found. Try more spacing/light.',''+(results.length?'ok':'err'));
+
+    // Compare against what the person said to expect, if they said
+    // anything. A card that is fully missed (not just badly cropped)
+    // produces nothing else to flag it -- this is the only check that
+    // catches that case, so it takes priority over the plain count
+    // message when a mismatch exists.
+    const expectedRaw=document.getElementById('expectedCount').value;
+    const expected=expectedRaw?parseInt(expectedRaw,10):null;
+
+    if(!results.length){
+      setStatus('No reliable card regions found. Try more spacing/light.','err');
+    }else if(expected && results.length<expected){
+      const missing=expected-results.length;
+      setStatus(`Detected ${results.length} of the ${expected} card${expected===1?'':'s'} you expected — `
+        +`${missing} may not have been found (often glare on a shiny card). Check the photo before scanning, `
+        +`or retake with less direct light on any card that's missing.`,'warn');
+    }else if(expected && results.length>expected){
+      setStatus(`Detected ${results.length} regions, more than the ${expected} you expected — `
+        +`something other than a card may have been picked up. Review the crops below before scanning.`,'warn');
+    }else{
+      setStatus(`Detected ${results.length} card region${results.length===1?'':'s'}.`
+        +(expected?' Matches what you expected.':''),'ok');
+    }
   }catch(e){setStatus('Detection error: '+e.message,'err')}
 };
 
