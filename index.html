@@ -1,1 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>CardGauge Business V1 — Isolated Test</title>
+<style>
+:root{--bg:#080d17;--panel:#101827;--panel2:#162236;--line:#293b57;--text:#f5f7fb;--muted:#94a3b8;--green:#22c55e;--blue:#3b82f6;--gold:#f59e0b;--red:#ef4444}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,-apple-system,sans-serif}
+button,input,select{font:inherit}button{cursor:pointer}
+.app{max-width:1180px;margin:auto;padding:14px 16px 60px}.top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0 16px}
+.logo{font-weight:950;letter-spacing:.4px}.logo span{color:var(--green)}.badge{font-size:10px;color:var(--gold);border:1px solid #6b4a14;padding:4px 8px;border-radius:99px;margin-left:8px}
+nav{display:flex;gap:7px;overflow:auto;padding-bottom:8px}nav button{white-space:nowrap;background:var(--panel);color:var(--muted);border:1px solid var(--line);padding:10px 14px;border-radius:10px;font-weight:800}
+nav button.active{background:rgba(34,197,94,.13);border-color:rgba(34,197,94,.45);color:var(--green)}
+.view{display:none}.view.active{display:block}.hero{padding:20px 2px 12px}.hero h1{margin:0 0 8px;font-size:clamp(25px,5vw,38px)}.hero p{margin:0;color:var(--muted);line-height:1.5;max-width:720px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px;margin:14px 0}.panel h2{font-size:18px;margin:0 0 5px}.sub{color:var(--muted);font-size:12px;line-height:1.5}
+.drop{border:2px dashed var(--line);background:var(--panel2);border-radius:14px;padding:28px 16px;text-align:center;display:block;cursor:pointer;margin-top:14px}.drop:hover{border-color:var(--green)}
+input[type=file]{display:none}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.actions{margin-top:12px}.btn{border:1px solid var(--line);background:var(--panel2);color:var(--text);padding:11px 14px;border-radius:10px;font-weight:800}.btn.primary{background:var(--green);color:#042b13;border-color:var(--green)}.btn.blue{background:var(--blue);border-color:var(--blue);color:#fff}.btn.gold{background:var(--gold);border-color:var(--gold);color:#211300}.btn.danger{border-color:#6b2525;color:#ff9b9b}.btn:disabled{opacity:.45;cursor:not-allowed}
+.status{margin-top:12px;color:var(--muted);font-size:12px}.status.ok{color:var(--green)}.status.err{color:#ff9b9b}.progress{height:8px;background:#0b1220;border-radius:99px;overflow:hidden;margin-top:10px}.bar{height:100%;width:0;background:var(--green);transition:width .2s}
+.preview{display:none;max-width:100%;max-height:520px;margin:14px auto 0;border-radius:10px}.stats{display:flex;gap:9px;flex-wrap:wrap;margin-top:13px}.stat{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:9px 12px}.stat b{font-size:20px;display:block}.stat span{font-size:10px;color:var(--muted)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;margin-top:14px}.item{background:var(--panel2);border:1px solid var(--line);border-radius:12px;overflow:hidden}.item img{width:100%;aspect-ratio:5/7;object-fit:cover;background:#02060c}.item .body{padding:10px}.name{font-size:12px;font-weight:850;line-height:1.3}.meta{font-size:10px;color:var(--muted);margin-top:4px}.pill{display:inline-block;font-size:9px;border:1px solid var(--line);padding:3px 6px;border-radius:99px;color:var(--muted);margin-top:7px}.ok{color:var(--green)}.warn{color:var(--gold)}.bad{color:#ff9b9b}
+table{width:100%;border-collapse:collapse;font-size:12px}th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.08em}
+input,select{background:#0b1322;color:var(--text);border:1px solid var(--line);border-radius:9px;padding:10px 11px;outline:none;width:100%}input:focus,select:focus{border-color:var(--green)}label.small{font-size:10px;color:var(--muted);display:block;margin-bottom:4px}
+.formgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}.formgrid .wide{grid-column:span 2}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.metric{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}.metric .v{font-size:25px;font-weight:900;margin-top:4px}.metric .k{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.spotgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;margin-top:12px}.spot{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px}.spot strong{font-size:13px}.spot small{color:var(--muted);display:block;margin-top:4px}.empty{padding:25px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:12px;margin-top:12px}
+#labelArea{display:none}.label-sheet{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.label{border:1px solid #000;background:#fff;color:#000;border-radius:4px;padding:8px;min-height:90px;font-family:Arial}.label b{font-size:12px}.label small{display:block;font-size:9px;margin-top:4px}.right{margin-left:auto}
+.notice{padding:11px 13px;border-radius:10px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);color:#f8c66a;font-size:11px;line-height:1.5;margin-top:10px}
+@media(max-width:760px){.cards{grid-template-columns:repeat(2,1fr)}.formgrid{grid-template-columns:repeat(2,1fr)}.formgrid .wide{grid-column:span 2}table{font-size:11px}}
+@media(max-width:520px){.app{padding:10px 11px 40px}.panel{padding:13px}.grid{grid-template-columns:repeat(2,1fr)}.cards{grid-template-columns:repeat(2,1fr)}.hero h1{font-size:26px}.spotgrid{grid-template-columns:1fr 1fr}.label-sheet{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="top">
+    <div class="logo">CARD<span>GAUGE</span> <small>BUSINESS</small><span class="badge">ISOLATED V1</span></div>
+    <a href="https://www.cardgauge.com" style="color:var(--muted);font-size:11px">CardGauge.com</a>
+  </div>
 
+  <nav id="nav">
+    <button class="active" data-view="scan">📸 Multi-Scan</button>
+    <button data-view="inventory">📦 Inventory</button>
+    <button data-view="breaks">🎥 Break Manager</button>
+    <button data-view="dashboard">📊 Dashboard</button>
+    <button data-view="labels">🏷️ Labels</button>
+  </nav>
+
+  <section id="scan" class="view active">
+    <div class="hero"><h1>Scan a whole table at once.</h1><p>Take one photo of several separated cards. This isolated V1 detects card-shaped regions, sends each crop through your existing CardGauge scanner API, and can add the results to test inventory.</p></div>
+    <div class="panel">
+      <h2>1. Capture the batch</h2>
+      <div class="sub">Best results: 3–10 cards, flat, not overlapping, camera roughly overhead, even lighting.</div>
+      <label class="drop" for="photo"><strong>📷 Take photo / choose image</strong><br><span class="sub">On a phone, this opens the camera or photo picker.</span></label>
+      <input id="photo" type="file" accept="image/*" capture="environment">
+      <img id="source" class="preview" alt="">
+      <div class="stats">
+        <div class="stat"><b id="detected">0</b><span>Cards detected</span></div>
+        <div class="stat"><b id="scanned">0</b><span>Cards scanned</span></div>
+        <div class="stat"><b id="added">0</b><span>Added to inventory</span></div>
+      </div>
+      <div class="actions row">
+        <button id="detectBtn" class="btn primary" disabled>Detect cards</button>
+        <button id="scanBtn" class="btn blue" disabled>Scan all detected</button>
+        <button id="addAllBtn" class="btn gold" disabled>Add all to inventory</button>
+      </div>
+      <div id="scanStatus" class="status"></div>
+      <div class="progress"><div id="bar" class="bar"></div></div>
+      <div id="results" class="grid"></div>
+      <div class="notice">This test does not write to Supabase and does not modify your production scanner. Inventory and Break Manager data are stored only in this browser's local storage until we build the production database integration.</div>
+    </div>
+  </section>
+
+  <section id="inventory" class="view">
+    <div class="hero"><h1>Business Inventory</h1><p>Test inventory for cards coming from Multi-Scan. Cost, asking price, profit and status are editable.</p></div>
+    <div class="panel">
+      <div class="row"><button class="btn danger" onclick="clearInventory()">Clear test inventory</button><button class="btn" onclick="exportInventory()">Export CSV</button><span class="right sub" id="invCount"></span></div>
+      <div id="inventoryTable"></div>
+    </div>
+  </section>
+
+  <section id="breaks" class="view">
+    <div class="hero"><h1>Break Manager</h1><p>Create a break, define the spots, then use the scanned card results to assign cards to customers by team.</p></div>
+    <div class="panel">
+      <h2>Create / edit break</h2>
+      <div class="formgrid">
+        <div class="wide"><label class="small">Break name</label><input id="breakName" placeholder="2026 Topps Chrome Hobby #1042"></div>
+        <div><label class="small">Spots</label><input id="spotCount" type="number" min="1" max="100" value="10"></div>
+        <div><label class="small">Rule</label><select id="breakRule"><option>Team</option><option>Random</option><option>Player</option></select></div>
+      </div>
+      <div class="actions"><button class="btn primary" onclick="createBreak()">Create break</button></div>
+      <div id="breakEditor"></div>
+    </div>
+    <div class="panel">
+      <h2>Assign scanned cards</h2><div class="sub">This V1 uses the team's text in a scan result. If the API result has no team, you can assign manually.</div>
+      <div id="breakAssignments"></div>
+    </div>
+  </section>
+
+  <section id="dashboard" class="view">
+    <div class="hero"><h1>Business Dashboard</h1><p>A test dashboard built around the workflow we're planning for CardGauge Business.</p></div>
+    <div class="cards">
+      <div class="metric"><div class="k">Inventory cards</div><div class="v" id="mCards">0</div></div>
+      <div class="metric"><div class="k">Inventory value</div><div class="v" id="mValue">$0</div></div>
+      <div class="metric"><div class="k">Potential profit</div><div class="v" id="mProfit">$0</div></div>
+      <div class="metric"><div class="k">Break spots</div><div class="v" id="mSpots">0</div></div>
+    </div>
+    <div class="panel"><h2>Workflow</h2><div class="sub">PHOTO → DETECT → IDENTIFY → PRICE → INVENTORY → BREAK ASSIGNMENT → LABEL</div></div>
+  </section>
+
+  <section id="labels" class="view">
+    <div class="hero"><h1>Print Labels</h1><p>Select inventory cards and generate a printer-friendly sheet. No printer connection is required for this test.</p></div>
+    <div class="panel">
+      <div class="row"><button class="btn primary" onclick="buildLabels()">Build labels from inventory</button><button class="btn" onclick="window.print()">Print</button></div>
+      <div id="labelArea"></div>
+    </div>
+  </section>
+</div>
+
+<script>
+const API='https://stock-card-api.onrender.com';
+const LS_INV='cg_business_v1_inventory';
+const LS_BREAK='cg_business_v1_break';
+let sourceFile=null, detectedCards=[], results=[], activeBreak=load(LS_BREAK,null);
+
+function load(k,f){try{return JSON.parse(localStorage.getItem(k))??f}catch(e){return f}}
+function save(k,v){localStorage.setItem(k,JSON.stringify(v))}
+function money(n){return '$'+Number(n||0).toFixed(2)}
+function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+
+document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#nav button').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));document.getElementById(b.dataset.view).classList.add('active');renderAll()});
+
+document.getElementById('photo').onchange=async e=>{
+  sourceFile=e.target.files[0]; if(!sourceFile)return;
+  const src=document.getElementById('source');src.src=URL.createObjectURL(sourceFile);src.style.display='block';
+  document.getElementById('detectBtn').disabled=false;document.getElementById('scanBtn').disabled=true;document.getElementById('addAllBtn').disabled=true;
+  document.getElementById('scanStatus').textContent='Photo loaded. Tap Detect cards.';
+};
+
+document.getElementById('detectBtn').onclick=async()=>{
+  if(!sourceFile)return;
+  setStatus('Detecting card-shaped regions…');
+  try{
+    detectedCards=await detectCards(sourceFile);
+    document.getElementById('detected').textContent=detectedCards.length;
+    results=detectedCards.map((x,i)=>({id:'scan-'+Date.now()+'-'+i,...x,status:'Detected'}));
+    renderResults();
+    document.getElementById('scanBtn').disabled=!results.length;
+    setStatus(results.length?`Detected ${results.length} card region${results.length===1?'':'s'}.`:'No reliable card regions found. Try more spacing/light.',''+(results.length?'ok':'err'));
+  }catch(e){setStatus('Detection error: '+e.message,'err')}
+};
+
+document.getElementById('scanBtn').onclick=async()=>{
+  let done=0;document.getElementById('scanBtn').disabled=true;document.getElementById('addAllBtn').disabled=true;
+  for(const r of results){
+    r.status='Scanning…';renderResults();
+    try{
+      const fd=new FormData();fd.append('front',r.file,'card-'+done+'.jpg');
+      const resp=await fetch(API+'/api/scan-card',{method:'POST',body:fd});
+      if(!resp.ok)throw new Error('Server '+resp.status);
+      const d=await resp.json();if(!d.success)throw new Error(d.error||'Scan failed');
+      r.data=d;r.status='Scanned';
+    }catch(e){r.status='Failed: '+e.message}
+    done++;document.getElementById('scanned').textContent=done;document.getElementById('bar').style.width=(done/results.length*100)+'%';renderResults();
+  }
+  document.getElementById('addAllBtn').disabled=!results.some(r=>r.data);
+  setStatus('Batch scan finished. Review the results before adding inventory.','ok');
+};
+
+document.getElementById('addAllBtn').onclick=()=>{
+  let inv=load(LS_INV,[]), added=0;
+  results.filter(r=>r.data).forEach(r=>{
+    const d=r.data;const card=d.card||d;
+    inv.push({
+      id:'inv-'+Date.now()+'-'+Math.random().toString(36).slice(2),
+      name:d.cardName||card.cardName||card.name||'Scanned card',
+      year:d.year||card.year||'',brand:d.brand||card.brand||'',set:d.set||card.set||'',
+      number:d.cardNumber||card.cardNumber||'',team:d.team||card.team||'',
+      market:Number(d.soldMedian||d.currentPrice||d.marketValue||d.price||0)||0,
+      cost:0,ask:Number(d.soldMedian||d.currentPrice||d.marketValue||d.price||0)||0,
+      status:'Available',image:r.url||'',source:'Multi-Scan',created:new Date().toISOString()
+    });added++;
+  });
+  save(LS_INV,inv);document.getElementById('added').textContent=added;renderInventory();renderDashboard();setStatus(`${added} cards added to TEST inventory.`,'ok');
+};
+
+async function detectCards(file){
+  // OpenCV.js detection. If OpenCV is unavailable, use a conservative fallback
+  // that lets the user scan the entire image as one card for debugging.
+  await waitForCV();
+  const img=await imageFromFile(file), c=document.createElement('canvas'),ctx=c.getContext('2d');
+  const max=1800, scale=Math.min(1,max/img.width);c.width=Math.round(img.width*scale);c.height=Math.round(img.height*scale);ctx.drawImage(img,0,0,c.width,c.height);
+  const mat=cv.imread(c), gray=new cv.Mat(), blur=new cv.Mat(), edge=new cv.Mat(), contours=new cv.MatVector(), hier=new cv.Mat();
+  cv.cvtColor(mat,gray,cv.COLOR_RGBA2GRAY);cv.GaussianBlur(gray,blur,new cv.Size(5,5),0);cv.Canny(blur,edge,60,160);cv.findContours(edge,contours,hier,cv.RETR_EXTERNAL,cv.CHAIN_APPROX_SIMPLE);
+  let boxes=[];
+  for(let i=0;i<contours.size();i++){
+    const cnt=contours.get(i), peri=cv.arcLength(cnt,true), approx=new cv.Mat();
+    cv.approxPolyDP(cnt,approx,.025*peri,true);const rect=cv.boundingRect(approx);const area=rect.width*rect.height;const ratio=rect.width/rect.height;
+    if(area>c.width*c.height*.015 && area<c.width*c.height*.45 && ratio>.48&&ratio<.82)boxes.push(rect);
+    approx.delete();cnt.delete();
+  }
+  boxes=mergeBoxes(boxes).sort((a,b)=>a.y-b.y||a.x-b.x).slice(0,20);
+  [mat,gray,blur,edge,contours,hier].forEach(x=>x.delete());
+  if(!boxes.length)throw new Error('No card-shaped rectangles detected');
+  return boxes.map((b,i)=>{
+    const pad=Math.max(4,Math.round(Math.min(b.width,b.height)*.02));
+    const x=Math.max(0,b.x-pad),y=Math.max(0,b.y-pad),w=Math.min(c.width-x,b.width+pad*2),h=Math.min(c.height-y,b.height+pad*2);
+    const cc=document.createElement('canvas');cc.width=w;cc.height=h;cc.getContext('2d').drawImage(c,x,y,w,h,0,0,w,h);
+    return {index:i+1,url:cc.toDataURL('image/jpeg',.9),file:dataURLtoFile(cc.toDataURL('image/jpeg',.9),'card-'+(i+1)+'.jpg')};
+  });
+}
+function mergeBoxes(bs){
+  const out=[];
+  for(const b of bs){let merged=false;for(const o of out){const ix=Math.max(0,Math.min(b.x+b.width,o.x+o.width)-Math.max(b.x,o.x));const iy=Math.max(0,Math.min(b.y+b.height,o.y+o.height)-Math.max(b.y,o.y));if(ix*iy>Math.min(b.width*b.height,o.width*o.height)*.35){const x=Math.min(b.x,o.x),y=Math.min(b.y,o.y),r=Math.max(b.x+b.width,o.x+o.width),bot=Math.max(b.y+b.height,o.y+o.height);o.x=x;o.y=y;o.width=r-x;o.height=bot-y;merged=true;break}}if(!merged)out.push({...b})}return out}
+function waitForCV(){return new Promise((res,rej)=>{let n=0;(function f(){if(window.cv&&cv.Mat)return res();if(n++>100)return rej(new Error('OpenCV did not load'));setTimeout(f,100)})()})}
+function imageFromFile(file){return new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=URL.createObjectURL(file)})}
+function dataURLtoFile(u,name){const [h,b]=u.split(',');const mime=h.match(/:(.*?);/)[1];const bin=atob(b);const a=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i);return new File([a],name,{type:mime})}
+function setStatus(t,c=''){const el=document.getElementById('scanStatus');el.textContent=t;el.className='status '+c}
+function renderResults(){
+  const el=document.getElementById('results');el.innerHTML=results.map((r,i)=>{
+    const d=r.data||{};const name=d.cardName||'Unidentified';const price=d.soldMedian||d.currentPrice||d.marketValue||d.price||0;
+    return `<div class="item"><img src="${r.url}" alt=""><div class="body"><div class="name">${esc(name)}</div><div class="meta">${esc([d.year,d.set,d.cardNumber].filter(Boolean).join(' · '))}</div><div class="pill ${r.status==='Scanned'?'ok':r.status.startsWith('Failed')?'bad':'warn'}">${esc(r.status)}</div>${price?`<div style="margin-top:7px;font-weight:900;color:var(--green)">${money(price)}</div>`:''}</div></div>`
+  }).join('');
+}
+function renderInventory(){
+  const inv=load(LS_INV,[]);document.getElementById('invCount').textContent=inv.length+' test cards';
+  if(!inv.length){document.getElementById('inventoryTable').innerHTML='<div class="empty">No test inventory yet. Run a Multi-Scan batch and add the results.</div>';return}
+  document.getElementById('inventoryTable').innerHTML=`<table><thead><tr><th>Card</th><th>Market</th><th>Cost</th><th>Ask</th><th>Profit</th><th>Status</th></tr></thead><tbody>${inv.map((x,i)=>`<tr><td><b>${esc(x.name)}</b><br><span class="sub">${esc([x.year,x.set,x.number,x.team].filter(Boolean).join(' · '))}</span></td><td>${money(x.market)}</td><td><input value="${x.cost}" onchange="editInv(${i},'cost',this.value)" type="number" step=".01"></td><td><input value="${x.ask}" onchange="editInv(${i},'ask',this.value)" type="number" step=".01"></td><td class="${(x.ask-x.cost)>=0?'ok':'bad'}">${money(x.ask-x.cost)}</td><td><select onchange="editInv(${i},'status',this.value)"><option ${x.status==='Available'?'selected':''}>Available</option><option ${x.status==='Listed'?'selected':''}>Listed</option><option ${x.status==='Sold'?'selected':''}>Sold</option></select></td></tr>`).join('')}</tbody></table>`
+}
+function editInv(i,k,v){let a=load(LS_INV,[]);a[i][k]=k==='cost'||k==='ask'?Number(v):v;save(LS_INV,a);renderDashboard()}
+function clearInventory(){if(confirm('Clear only the TEST inventory?')){localStorage.removeItem(LS_INV);renderAll()}}
+function exportInventory(){const a=load(LS_INV,[]),rows=[['Card','Year','Set','Number','Team','Market','Cost','Ask','Profit','Status'],...a.map(x=>[x.name,x.year,x.set,x.number,x.team,x.market,x.cost,x.ask,x.ask-x.cost,x.status])];const blob=new Blob([rows.map(r=>r.map(v=>`"${String(v??'').replaceAll('"','""')}"`).join(',')).join('\n')],{type:'text/csv'});const u=URL.createObjectURL(blob),aEl=document.createElement('a');aEl.href=u;aEl.download='cardgauge-test-inventory.csv';aEl.click();URL.revokeObjectURL(u)}
+
+function createBreak(){
+  const n=Math.max(1,Math.min(100,Number(document.getElementById('spotCount').value)||10));
+  activeBreak={id:'break-'+Date.now(),name:document.getElementById('breakName').value||'Test Break',rule:document.getElementById('breakRule').value,spots:Array.from({length:n},(_,i)=>({spot:i+1,customer:'',team:'',cards:[]}))};
+  save(LS_BREAK,activeBreak);renderBreaks();
+}
+function renderBreaks(){
+  const ed=document.getElementById('breakEditor'), br=activeBreak;
+  if(!br){ed.innerHTML='<div class="empty">No break created yet.</div>';document.getElementById('breakAssignments').innerHTML='<div class="empty">Create a break first.</div>';return}
+  ed.innerHTML=`<div class="notice"><b>${esc(br.name)}</b> · ${esc(br.rule)} · ${br.spots.length} spots</div><div class="spotgrid">${br.spots.map((s,i)=>`<div class="spot"><strong>Spot ${s.spot}</strong><label class="small" style="margin-top:9px">Customer</label><input value="${esc(s.customer)}" onchange="editSpot(${i},'customer',this.value)" placeholder="Customer name"><label class="small" style="margin-top:7px">Team / Player</label><input value="${esc(s.team)}" onchange="editSpot(${i},'team',this.value)" placeholder="Dodgers"></div>`).join('')}</div>`;
+  renderAssignments();
+}
+function editSpot(i,k,v){activeBreak.spots[i][k]=v;save(LS_BREAK,activeBreak)}
+function renderAssignments(){
+  const el=document.getElementById('breakAssignments');if(!activeBreak){el.innerHTML='';return}
+  const inv=load(LS_INV,[]);const scanCards=results.filter(r=>r.data);
+  el.innerHTML=`<div class="actions row"><button class="btn blue" onclick="autoAssign()">Auto-assign scanned cards</button><button class="btn" onclick="renderAssignments()">Refresh</button></div>${activeBreak.spots.map(s=>`<div class="panel" style="margin:10px 0"><b>Spot ${s.spot}</b> — ${esc(s.customer||'Unassigned')} — ${esc(s.team||'No team')}</b><div class="sub">${s.cards.length} assigned card(s)</div>${s.cards.length?'<ul>'+s.cards.map(id=>{const x=inv.find(z=>z.id===id);return `<li>${esc(x?x.name:id)}</li>`}).join('')+'</ul>':'<div class="sub" style="margin-top:5px">Nothing assigned yet.</div>'}</div>`).join('')}`;
+}
+function autoAssign(){
+  if(!activeBreak)return;const inv=load(LS_INV,[]),available=inv.filter(x=>x.status!=='Sold');let assigned=0;
+  results.filter(r=>r.data).forEach(r=>{const d=r.data;const team=String(d.team||d.cardTeam||'').toLowerCase();if(!team)return;const spot=activeBreak.spots.find(s=>s.team&&s.team.toLowerCase()===team);if(!spot)return;const x=available.find(z=>z.name===(d.cardName||'')&&!spot.cards.includes(z.id));if(x){spot.cards.push(x.id);assigned++}});
+  save(LS_BREAK,activeBreak);renderAssignments();alert(assigned?`Assigned ${assigned} card(s).`:'No team matches were available. Manual assignment is still supported.');
+}
+function renderDashboard(){
+  const inv=load(LS_INV,[]);document.getElementById('mCards').textContent=inv.length;document.getElementById('mValue').textContent=money(inv.reduce((a,x)=>a+Number(x.market||0),0));document.getElementById('mProfit').textContent=money(inv.reduce((a,x)=>a+Number(x.ask||0)-Number(x.cost||0),0));document.getElementById('mSpots').textContent=activeBreak?activeBreak.spots.length:0;
+}
+function buildLabels(){
+  const inv=load(LS_INV,[]);const el=document.getElementById('labelArea');el.style.display='block';el.innerHTML='<div class="label-sheet">'+inv.slice(0,60).map(x=>`<div class="label"><b>${esc(x.name)}</b><small>${esc([x.year,x.set,x.number].filter(Boolean).join(' · '))}</small><small>Market ${money(x.market)} · Ask ${money(x.ask)}</small></div>`).join('')+'</div>';
+}
+function renderAll(){renderInventory();renderBreaks();renderDashboard()}
+renderAll();
+</script>
+</body>
+</html>
