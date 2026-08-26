@@ -69,7 +69,10 @@ input,select{background:#0b1322;color:var(--text);border:1px solid var(--line);b
       <label class="drop" for="photo"><strong>📷 Take photo / choose image</strong><br><span class="sub">On a phone, this opens the camera or photo picker.</span></label>
       <input id="photo" type="file" accept="image/*" capture="environment">
       <input id="backPhoto" type="file" accept="image/*" capture="environment" style="display:none">
-      <img id="source" class="preview" alt="">
+      <div id="sourceWrap" style="position:relative;display:inline-block">
+        <img id="source" class="preview" alt="">
+        <canvas id="trayOverlay" style="position:absolute;top:0;left:0;pointer-events:none"></canvas>
+      </div>
       <!-- EXPECTED-COUNT SAFETY NET.
 
            Detection on shiny/refractor cards is glare-sensitive in a way
@@ -830,9 +833,23 @@ function renderResults(){
     const metaParts=[d.year||card.year,d.set||card.set,d.cardNumber||card.cardNumber,getTeam(d)];
     if(variant.parallel) metaParts.push(variant.parallel);
     if(variant.serial) metaParts.push(variant.serial);
+    // DIAGNOSTIC: shows exactly what /api/scan-card actually returned for
+    // this card, with no dev tools needed. This is how "Unknown" fields get
+    // told apart -- either the raw JSON already says "Unknown" (a backend/AI
+    // read problem) or it has real values the display is failing to pick up
+    // (a frontend field-mapping bug, the same class of issue as the
+    // avgSoldPrice mislabeling fixed earlier). Off by default, one tap to
+    // see, easy to screenshot and send back.
+    const debugId='dbg-'+r.id;
+    const debugToggle=r.data?`<div class="pill" style="margin-top:6px;cursor:pointer;opacity:.6" onclick="toggleDebug('${debugId}')">🔍 Raw response</div>
+      <pre id="${debugId}" style="display:none;white-space:pre-wrap;font-size:10px;background:#0006;padding:8px;border-radius:8px;margin-top:6px;max-height:240px;overflow:auto">${esc(JSON.stringify(r.data,null,2))}</pre>`:'';
     return `<div class="item"><img src="${r.url}" alt=""><div class="body"><div class="name">${esc(name)}${variantBadgesHtml(variant)}</div><div class="meta">${esc(metaParts.filter(Boolean).join(' · '))}</div><div class="pill ${r.status==='Scanned'?'ok':r.status.startsWith('Failed')?'bad':'warn'}">${esc(r.status)}</div>${outlierWarning}${reviewBadgeHtml(reviewFlag)}${price?`<div style="margin-top:7px;font-weight:900;color:var(--green)">${money(price)}${basisLabel}</div>`:''}
-      ${r.back?`<div class="pill ok">Front + Back matched</div>`:''}</div></div>`
+      ${r.back?`<div class="pill ok">Front + Back matched</div>`:''}${debugToggle}</div></div>`
   }).join('');
+}
+function toggleDebug(id){
+  const el=document.getElementById(id);
+  if(el) el.style.display = el.style.display==='none' ? 'block' : 'none';
 }
 function renderInventory(){
   const inv=load(LS_INV,[]);document.getElementById('invCount').textContent=inv.length+' test cards';
